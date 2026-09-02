@@ -1,0 +1,9 @@
+streamlit
+plotly
+pandas
+google-genai
+firebase-admin
+google-cloud-secret-manager
+python-dotenv
+google-auth
+requests
