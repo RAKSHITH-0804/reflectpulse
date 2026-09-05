@@ -27,7 +27,6 @@ def calculate_journal_streaks(entries: List[Dict[str, Any]]) -> Tuple[int, int]:
                 dt = datetime.fromisoformat(str(created_val).replace('Z', '+00:00'))
                 dates.add(dt.date())
             except Exception:
-                # Fallback to taking the first 10 chars
                 try:
                     dt = datetime.strptime(str(created_val)[:10], "%Y-%m-%d")
                     dates.add(dt.date())
@@ -73,24 +72,57 @@ def calculate_journal_streaks(entries: List[Dict[str, Any]]) -> Tuple[int, int]:
 
     return current_streak, max_streak
 
-# --- Visualizations ---
+# --- Visualizations with Dynamic Theme Adaptation ---
 
-def generate_mood_trend_chart(entries: List[Dict[str, Any]]) -> go.Figure:
+def get_chart_theme_tokens(theme: str) -> Dict[str, Any]:
     """
-    Generates a beautiful Plotly line chart representing the user's mood over time.
+    Returns color and typography parameters matching the active UI theme.
+    Exclusively supports '🍂 Warm Charcoal & Amber' (default) and '🔥 Obsidian Flame'.
     """
+    if "Obsidian" in theme or "Flame" in theme:
+        return {
+            "font_color": "#F5F5F7",
+            "title_color": "#F5F5F7",
+            "font_family": "Playfair Display, Georgia, serif",
+            "tick_color": "#A1A1AA",
+            "grid_color": "rgba(255, 76, 0, 0.12)",
+            "line_color": "#FF4C00",
+            "marker_color": "#FF7A33",
+            "bar_scale": px.colors.sequential.Sunsetdark,
+            "paper_bg": "rgba(0, 0, 0, 0)",
+            "plot_bg": "rgba(0, 0, 0, 0)"
+        }
+    else:  # 🍂 Warm Charcoal & Amber (Default)
+        return {
+            "font_color": "#EAE3D8",
+            "title_color": "#EAE3D8",
+            "font_family": "Roboto, sans-serif",
+            "tick_color": "#B0A695",
+            "grid_color": "#443A2E",
+            "line_color": "#E8B25C",
+            "marker_color": "#C9852F",
+            "bar_scale": px.colors.sequential.YlOrBr,
+            "paper_bg": "#2A2420",
+            "plot_bg": "#2A2420"
+        }
+
+def generate_mood_trend_chart(entries: List[Dict[str, Any]], theme: str = "🍂 Warm Charcoal & Amber") -> go.Figure:
+    """
+    Generates a Plotly line chart representing user mood over time, dynamically themed.
+    """
+    tokens = get_chart_theme_tokens(theme)
+
     if not entries:
-        # Return empty placeholder figure
         fig = go.Figure()
         fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor=tokens["paper_bg"],
+            plot_bgcolor=tokens["plot_bg"],
             xaxis={'visible': False},
             yaxis={'visible': False},
             annotations=[{
                 'text': 'No journal entry data available yet.',
                 'xref': 'paper', 'yref': 'paper',
-                'showarrow': False, 'font': {'size': 16, 'color': '#718096'}
+                'showarrow': False, 'font': {'size': 15, 'color': tokens['tick_color']}
             }]
         )
         return fig
@@ -135,30 +167,29 @@ def generate_mood_trend_chart(entries: List[Dict[str, Any]]) -> go.Figure:
 
     # Style line and markers
     fig.update_traces(
-        line=dict(color="#6366f1", width=3),
-        marker=dict(size=8, color="#818cf8", symbol="circle"),
+        line=dict(color=tokens["line_color"], width=3),
+        marker=dict(size=8, color=tokens["marker_color"], symbol="circle"),
         textposition="top center",
         hoverinfo="text",
         hovertemplate="<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br><b>Mood Score:</b> %{y}/10<br><b>Category:</b> %{text}<extra></extra>"
     )
 
-    # Glassmorphism dark layout
     fig.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color="#e2e8f0", family="Inter, sans-serif"),
-        title_font=dict(size=18, color="#ffffff", family="Outfit, sans-serif"),
+        paper_bgcolor=tokens["paper_bg"],
+        plot_bgcolor=tokens["plot_bg"],
+        font=dict(color=tokens["font_color"], family=tokens["font_family"]),
+        title_font=dict(size=18, color=tokens["title_color"], family=tokens["font_family"]),
         xaxis=dict(
             showgrid=True,
-            gridcolor="rgba(255, 255, 255, 0.05)",
-            tickfont=dict(color="#a0aec0"),
-            linecolor="rgba(255, 255, 255, 0.1)"
+            gridcolor=tokens["grid_color"],
+            tickfont=dict(color=tokens["tick_color"]),
+            linecolor=tokens["grid_color"]
         ),
         yaxis=dict(
             showgrid=True,
-            gridcolor="rgba(255, 255, 255, 0.05)",
-            tickfont=dict(color="#a0aec0"),
-            linecolor="rgba(255, 255, 255, 0.1)",
+            gridcolor=tokens["grid_color"],
+            tickfont=dict(color=tokens["tick_color"]),
+            linecolor=tokens["grid_color"],
             range=[0.5, 10.5],
             dtick=1
         ),
@@ -167,22 +198,23 @@ def generate_mood_trend_chart(entries: List[Dict[str, Any]]) -> go.Figure:
 
     return fig
 
-def generate_theme_distribution_chart(entries: List[Dict[str, Any]]) -> go.Figure:
+def generate_theme_distribution_chart(entries: List[Dict[str, Any]], theme: str = "🍂 Warm Charcoal & Amber") -> go.Figure:
     """
-    Generates a Plotly bar chart depicting the frequency breakdown of reflection themes.
+    Generates a Plotly bar chart depicting reflection themes breakdown, dynamically themed.
     """
+    tokens = get_chart_theme_tokens(theme)
+
     if not entries:
-        # Return empty placeholder figure
         fig = go.Figure()
         fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor=tokens["paper_bg"],
+            plot_bgcolor=tokens["plot_bg"],
             xaxis={'visible': False},
             yaxis={'visible': False},
             annotations=[{
                 'text': 'No themes found yet.',
                 'xref': 'paper', 'yref': 'paper',
-                'showarrow': False, 'font': {'size': 16, 'color': '#718096'}
+                'showarrow': False, 'font': {'size': 15, 'color': tokens['tick_color']}
             }]
         )
         return fig
@@ -197,22 +229,21 @@ def generate_theme_distribution_chart(entries: List[Dict[str, Any]]) -> go.Figur
                 theme_counts[tag_clean] = theme_counts.get(tag_clean, 0) + 1
 
     if not theme_counts:
-        # Fallback if no tags exist yet
         fig = go.Figure()
         fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor=tokens["paper_bg"],
+            plot_bgcolor=tokens["plot_bg"],
             annotations=[{
                 'text': 'Write entries to analyze themes.',
                 'xref': 'paper', 'yref': 'paper',
-                'showarrow': False, 'font': {'size': 16, 'color': '#718096'}
+                'showarrow': False, 'font': {'size': 15, 'color': tokens['tick_color']}
             }]
         )
         return fig
 
     # Convert to DataFrame
     df = pd.DataFrame(list(theme_counts.items()), columns=["Theme", "Occurrences"])
-    df = df.sort_values(by="Occurrences", ascending=True)  # Ascending for horizontal bar
+    df = df.sort_values(by="Occurrences", ascending=True)
 
     # Draw Horizontal Bar Chart
     fig = px.bar(
@@ -222,31 +253,31 @@ def generate_theme_distribution_chart(entries: List[Dict[str, Any]]) -> go.Figur
         orientation="h",
         title="Journal Reflection Themes",
         color="Occurrences",
-        color_continuous_scale=px.colors.sequential.Sunsetdark
+        color_continuous_scale=tokens["bar_scale"]
     )
 
     fig.update_traces(
-        marker_line_color='rgba(255, 255, 255, 0.1)',
+        marker_line_color=tokens["grid_color"],
         marker_line_width=1,
-        opacity=0.85,
+        opacity=0.88,
         hovertemplate="<b>Theme:</b> %{y}<br><b>Occurrences:</b> %{x}<extra></extra>"
     )
 
     fig.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color="#e2e8f0", family="Inter, sans-serif"),
-        title_font=dict(size=18, color="#ffffff", family="Outfit, sans-serif"),
+        paper_bgcolor=tokens["paper_bg"],
+        plot_bgcolor=tokens["plot_bg"],
+        font=dict(color=tokens["font_color"], family=tokens["font_family"]),
+        title_font=dict(size=18, color=tokens["title_color"], family=tokens["font_family"]),
         coloraxis_showscale=False,
         xaxis=dict(
             showgrid=True,
-            gridcolor="rgba(255, 255, 255, 0.05)",
-            tickfont=dict(color="#a0aec0"),
+            gridcolor=tokens["grid_color"],
+            tickfont=dict(color=tokens["tick_color"]),
             dtick=1
         ),
         yaxis=dict(
             showgrid=False,
-            tickfont=dict(color="#a0aec0")
+            tickfont=dict(color=tokens["tick_color"])
         ),
         margin=dict(l=40, r=40, t=50, b=40)
     )

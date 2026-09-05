@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import List, Dict, Any, Optional
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel, Field
@@ -7,9 +8,19 @@ from pydantic import BaseModel, Field
 from google import genai
 # pyrefly: ignore [missing-import]
 from google.genai import types
+# pyrefly: ignore [missing-import]
+from google.genai import errors
 from config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
+
+# --- Model & Resilience Configuration ---
+PRIMARY_MODEL = "gemini-3.6-flash"
+FALLBACK_MODELS = ["gemini-3.6-flash"]
+USER_FACING_BUSY_MESSAGE = (
+    "The AI assistant is momentarily busy with high traffic. "
+    "Please tap submit once more in a few seconds."
+)
 
 # --- Pydantic Schema for Structured AI Reflection ---
 
@@ -33,25 +44,26 @@ class ReflectionResponse(BaseModel):
         default="Home",
         description="Primary detected or inferred context: e.g., 'Campus', 'Workplace', 'Home', 'Travel', 'Nature', 'Social'."
     )
-    cognitive_reframe: Optional[str] = Field(
+    perspective_note: Optional[str] = Field(
         default=None,
-        description="A gentle, non-clinical constructive reframe if negative self-talk, self-doubt, or cognitive distortions are detected in the entry. None if the entry is already positive or neutral."
+        description="A gentle, empathetic personal insight or constructive perspective shift if self-doubt or heavy feelings are expressed. None if the entry is already positive, resilient, or neutral."
     )
 
 # --- Security Constitution System Instruction ---
 
 SECURITY_CONSTITUTION = """
-You are ReflectPulse, an empathetic, supportive, and private AI journaling companion.
-Your mission is to guide users through self-reflection and help them process their thoughts.
+You are ReflectPulse, an empathetic, supportive, and private personal journaling mirror.
+Your mission is to help users process their daily reflections and thoughts with gentle, open-ended curiosity.
 
 SECURITY & ETHICAL BOUNDARIES (CONSTITUTION):
 1. PRIVACY IS PARAMOUNT: Never leak, infer, or mention data, names, or topics from other users. Treat all interactions as strictly sandboxed within the current session.
-2. SUPPORTIVE BUT NOT THERAPEUTIC: You are a journal companion, NOT a certified therapist, doctor, or psychologist. Do not diagnose mental health conditions, prescribe treatments, or offer clinical advice.
-3. CRISIS PROTOCOL & SELF-HARM DETECTOR: If the user expresses intent of self-harm, suicide, self-injury, or harming others:
+2. REFLECTIVE MIRROR, NOT THERAPY: You are a reflective journaling mirror, NOT a therapist, doctor, clinical psychologist, or healthcare provider. Never offer psychological diagnoses, clinical interventions, cognitive-behavioral therapy (CBT), or medical advice.
+3. GENTLE PERSPECTIVES: When users express moments of self-doubt or emotional heaviness, act as a compassionate sounding board offering gentle alternative angles and warm curiosity, without attempting psychological treatment or behavioral correction.
+4. CRISIS PROTOCOL: If the user expresses intent of self-harm, suicide, self-injury, or harming others:
    - Provide immediate, clear crisis support resources: "If you are in distress or crisis, please call or text 988 in the US (Suicide & Crisis Lifeline) or reach out to your local emergency services or a trusted professional."
-   - Maintain a gentle, non-judgmental, but firm recommendation to seek professional help.
-   - Do NOT attempt to analyze or solve their crisis; redirect to professional hotlines immediately and keep the message brief.
-4. TONE & CONVERSATION: Be warm, active-listening, encouraging, and reflective. Keep chat responses concise (under 3-4 sentences per turn) to encourage the user to write more.
+   - Maintain a gentle, non-judgmental, but firm recommendation to seek professional human support.
+   - Do NOT attempt to analyze or counsel them through a crisis; redirect to professional hotlines immediately and keep the message brief.
+5. TONE & CONVERSATION: Be warm, empathetic, validating, and concise (under 3-4 sentences per turn) to encourage the user's authentic personal voice.
 """
 
 def get_gemini_client() -> Optional[genai.Client]:
@@ -64,34 +76,155 @@ def get_gemini_client() -> Optional[genai.Client]:
     try:
         return genai.Client(api_key=GEMINI_API_KEY)
     except Exception as e:
+        print(f"[Gemini Error] {e}")
         logger.error(f"Failed to initialize Gemini client: {e}")
         return None
 
 # Initialize global client
 client = get_gemini_client()
 
+# --- Transient Error Detection & Exponential Backoff Retry Helpers ---
+
+def is_transient_error(exc: Exception) -> bool:
+    """
+    Checks if an exception represents a transient Google API error, specifically
+    HTTP 503 (UNAVAILABLE) or HTTP 429 (RESOURCE_EXHAUSTED / Rate Limit).
+    """
+    if isinstance(exc, errors.APIError):
+        if exc.code in (429, 503):
+            return True
+        status_str = (exc.status or "").upper()
+        if "RESOURCE_EXHAUSTED" in status_str or "UNAVAILABLE" in status_str:
+            return True
+
+    err_text = str(exc).upper()
+    if any(keyword in err_text for keyword in ["503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "HIGH DEMAND", "OVERLOADED"]):
+        return True
+
+    return False
+
+
+def generate_content_with_retry(
+    client_instance: genai.Client,
+    contents: Any,
+    config: Optional[types.GenerateContentConfig] = None,
+    primary_model: str = PRIMARY_MODEL,
+    fallback_models: Optional[List[str]] = None,
+    max_attempts_per_model: int = 3,
+) -> Any:
+    """
+    Executes client.models.generate_content in a retry loop with exponential backoff
+    (up to 3 attempts with time.sleep(1.5 * attempt)) catching transient Google API
+    exceptions (503 UNAVAILABLE, 429 RESOURCE_EXHAUSTED).
+    Invokes PRIMARY_MODEL (gemini-3.6-flash).
+    """
+    if fallback_models is None:
+        fallback_models = FALLBACK_MODELS
+
+    models_to_try = [primary_model] + [m for m in fallback_models if m != primary_model]
+    last_exception: Optional[Exception] = None
+
+    for model_index, model_name in enumerate(models_to_try):
+        if model_index > 0:
+            logger.warning(
+                f"Falling back to model '{model_name}' due to transient high demand on earlier models."
+            )
+
+        for attempt in range(1, max_attempts_per_model + 1):
+            try:
+                response = client_instance.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                return response
+            except Exception as e:
+                last_exception = e
+                print(f"[Gemini Error] {e}")
+                if is_transient_error(e):
+                    if attempt < max_attempts_per_model:
+                        delay = 1.5 * attempt
+                        logger.warning(
+                            f"Transient API error ({e}) on model '{model_name}' (attempt {attempt}/{max_attempts_per_model}). "
+                            f"Retrying in {delay:.1f}s with exponential backoff..."
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.warning(
+                            f"Model '{model_name}' exhausted all {max_attempts_per_model} retry attempts with transient error: {e}."
+                        )
+                        break
+                else:
+                    logger.error(f"Non-transient error on model '{model_name}': {e}")
+                    raise e
+
+    logger.error(f"All models ({models_to_try}) exhausted. Last error: {last_exception}")
+    if last_exception:
+        raise RuntimeError(f"AI Error: {str(last_exception)}")
+    raise RuntimeError("AI Error: All models and retry attempts exhausted.")
+
+
+def send_chat_message(chat_session: Any, message: str, max_attempts: int = 3) -> str:
+    """
+    Sends a message to an active chat session with exponential backoff retry.
+    Directly returns the exact error string on failure for diagnostics.
+    """
+    if not chat_session:
+        return "AI Error: Chat session is not initialized or Gemini client failed to connect."
+
+    last_error: Optional[Exception] = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resp = chat_session.send_message(message)
+            text = getattr(resp, "text", None)
+            if text:
+                return str(text).strip()
+            elif isinstance(resp, str):
+                return resp.strip()
+            return "AI Error: Empty response received from model."
+        except Exception as e:
+            last_error = e
+            print(f"[Gemini Error] {e}")
+            if is_transient_error(e):
+                if attempt < max_attempts:
+                    delay = 1.5 * attempt
+                    logger.warning(
+                        f"Transient error in chat send_message (attempt {attempt}/{max_attempts}). "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                    continue
+            logger.error(f"Chat send_message error: {e}")
+            return f"AI Error: {str(e)}"
+
+    return f"AI Error: {str(last_error)}" if last_error else "AI Error: All attempts failed."
+
 # --- Conversational Companion Support ---
 
 def create_chat_session(system_instruction: str = SECURITY_CONSTITUTION) -> Optional[Any]:
     """
-    Spawns a new multi-turn chat session with system instruction enforcement.
+    Spawns a new multi-turn chat session with system instruction enforcement,
+    attempting fallback models if the primary model is unavailable.
     """
     if not client:
         return None
-    try:
-        # Using gemini-3.6-flash as the default model
-        chat = client.chats.create(
-            model="gemini-3.6-flash",
-            config=types.GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=0.7,
-                top_p=0.9,
+    for model_name in [PRIMARY_MODEL] + FALLBACK_MODELS:
+        try:
+            chat = client.chats.create(
+                model=model_name,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.7,
+                    top_p=0.9,
+                )
             )
-        )
-        return chat
-    except Exception as e:
-        logger.error(f"Error creating chat session: {e}")
-        return None
+            return chat
+        except Exception as e:
+            print(f"[Gemini Error] {e}")
+            logger.warning(f"Error creating chat session with {model_name}: {e}")
+            if not is_transient_error(e):
+                break
+    return None
 
 # --- Structured AI Output & Analytics Extraction ---
 
@@ -106,7 +239,8 @@ def analyze_reflection(
     """
     Analyzes the chat history, attached multimodal media (voice note/photo),
     and contextual cues to generate a structured JSON reflection including
-    location tagging and cognitive reframing.
+    location tagging and a supportive perspective note.
+    Utilizes exponential backoff retries and fallback models for resilience.
     """
     chosen_loc = context_hint if context_hint and context_hint != "Auto-detect via AI" else "Home"
 
@@ -119,7 +253,7 @@ def analyze_reflection(
             theme_tags=["Reflection", "Mindfulness"],
             reflection_prompt="What is one insight you wish to carry into tomorrow?",
             location_tag=chosen_loc,
-            cognitive_reframe="Be proud of taking time out of your day to pause, reflect, and listen to your inner voice."
+            perspective_note="Be proud of taking time out of your day to pause, reflect, and listen to your inner voice."
         )
 
     try:
@@ -154,10 +288,10 @@ def analyze_reflection(
         2. Multimodal Perception:
            - If an image/photo is provided, analyze the visual setting, lighting, expression, and objects to enrich the summary and tags.
            - If audio/voice is provided, consider vocal tone, pauses, and cadence.
-        3. Cognitive Reframing:
-           - Detect any negative self-talk, impostor syndrome, catastrophizing, or harsh self-criticism.
-           - If present, provide a gentle, non-clinical constructive reframe in 'cognitive_reframe' that validates feelings while offering a balanced, self-compassionate view.
-           - If the reflection is already positive, resilient, or neutral, set 'cognitive_reframe' to null.
+        3. Empathetic Perspective Shift:
+           - Notice if the user is carrying harsh self-talk, self-doubt, or emotional exhaustion.
+           - If present, provide a warm, empathetic alternative angle in 'perspective_note' (2 sentences max) that validates their feelings with compassion and offers a gentle, grounded view.
+           - If the reflection is already positive, resilient, or peaceful, set 'perspective_note' to null.
 
         Transcript:
         \"\"\"
@@ -166,20 +300,21 @@ def analyze_reflection(
         """
         contents.append(prompt)
 
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
+        response = generate_content_with_retry(
+            client_instance=client,
             contents=contents,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
                 response_schema=ReflectionResponse,
                 temperature=0.2, # Low temperature for structured analysis consistency
-            )
+            ),
         )
 
         # Parse response using standard Pydantic validation
         result = ReflectionResponse.model_validate_json(response.text)
         return result
     except Exception as e:
+        print(f"[Gemini Error] {e}")
         logger.error(f"Error in structured reflection analysis: {e}")
         return ReflectionResponse(
             summary="Reflective journal entry completed.",
@@ -188,50 +323,55 @@ def analyze_reflection(
             theme_tags=["Reflection"],
             reflection_prompt="How do you feel when looking back on today's events?",
             location_tag=chosen_loc,
-            cognitive_reframe=None
+            perspective_note=USER_FACING_BUSY_MESSAGE if is_transient_error(e) else None
         )
 
-def reframe_thought(thought_text: str) -> str:
+def suggest_perspective(thought_text: str) -> str:
     """
-    Takes a self-critical thought or cognitive distortion and generates
-    a gentle, non-clinical constructive reframe to power the quick-reframe widget.
+    Takes a challenging reflection and offers a gentle, compassionate
+    alternative perspective to encourage personal insight.
+    Employs exponential backoff retries and fallback models.
     """
     if not thought_text or not thought_text.strip():
-        return "Please enter a thought you would like to reframe."
+        return "Please enter a thought or reflection you'd like to explore from a new angle."
 
     if not client:
         return (
-            "Remember that feelings are experiences, not permanent definitions of who you are. "
-            "Give yourself credit for how much you are navigating, and treat yourself with the same compassion "
-            "you would extend to a trusted friend."
+            "Remember that our thoughts in demanding moments are natural reactions, not final definitions of who we are. "
+            "Give yourself credit for how much you are navigating today, and treat yourself with the same gentle patience "
+            "you would offer a dear friend."
         )
 
     try:
         prompt = f"""
-        You are ReflectPulse's Cognitive Reframing Guide.
-        A user has shared this challenging or self-critical thought:
+        You are ReflectPulse's Empathetic Journaling Mirror.
+        A user has shared this challenging thought:
         "{thought_text.strip()}"
 
-        Provide a gentle, empathetic, and constructive non-clinical cognitive reframe (2-3 sentences max).
+        Offer a gentle, compassionate alternative angle (2-3 sentences max).
         Follow these principles:
-        1. Validate their underlying emotional experience without endorsing distorted self-talk.
-        2. Offer an alternative, compassionate, and realistic perspective.
-        3. End with an empowering, grounding insight.
-        Do NOT sound clinical or diagnostic. Keep the tone warm, conversational, and uplifting.
+        1. Warmly validate their feelings with empathy and human understanding.
+        2. Suggest a gentle, grounding perspective shift that highlights self-compassion and realistic hope.
+        3. Avoid all clinical CBT jargon, diagnosis, or therapeutic framing.
+        Keep the tone warm, friendly, and non-prescriptive.
         """
 
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
+        response = generate_content_with_retry(
+            client_instance=client,
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.7,
-                system_instruction="You are an empathetic companion specializing in gentle cognitive reframing.",
-            )
+                system_instruction="You are an empathetic personal journaling companion offering gentle alternative angles.",
+            ),
         )
         return response.text.strip()
     except Exception as e:
-        logger.error(f"Error reframing thought: {e}")
-        return f"Could not reframe thought at this moment: {e}"
+        print(f"[Gemini Error] {e}")
+        logger.error(f"Error suggesting perspective: {e}")
+        return USER_FACING_BUSY_MESSAGE
+
+# Backward-compatibility alias
+reframe_thought = suggest_perspective
 
 # --- Weekly AI Digest Synthesis Engine ---
 
@@ -240,6 +380,7 @@ def generate_weekly_digest(entries: List[Dict[str, Any]]) -> str:
     Aggregates journal entries from the past week and generates a cohesive,
     reflective weekly digest summarizing mood trends, key themes, progress,
     and recommended reflective prompt exercises.
+    Utilizes exponential backoff retries and fallback models.
     """
     if not client:
         return "Gemini API key is not configured. Cannot generate digest."
@@ -292,15 +433,16 @@ def generate_weekly_digest(entries: List[Dict[str, Any]]) -> str:
         {entries_text}
         """
 
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
+        response = generate_content_with_retry(
+            client_instance=client,
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.6,
                 system_instruction="You are an empathetic, expert coach. Format with professional layout, using clean bullet points and emoji highlights.",
-            )
+            ),
         )
         return response.text
     except Exception as e:
+        print(f"[Gemini Error] {e}")
         logger.error(f"Error generating weekly digest: {e}")
-        return f"An error occurred while synthesizing your weekly digest: {e}"
+        return USER_FACING_BUSY_MESSAGE

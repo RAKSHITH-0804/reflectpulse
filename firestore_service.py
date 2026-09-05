@@ -62,13 +62,18 @@ def create_journal_entry(user_id: str, entry_data: dict) -> str:
     if not db:
         raise ConnectionError("Firestore client is not initialized.")
 
-    # Explicitly append server-side metadata and multimodal context for security verification
+    # Explicitly append server-side metadata, serialized chat transcript, and multimodal context
+    perspective_val = entry_data.get("perspective_note") or entry_data.get("cognitive_reframe")
+    chat_transcript_val = entry_data.get("chat_transcript") or []
     doc_data = {
         "location_tag": entry_data.get("location_tag", "Home"),
-        "cognitive_reframe": entry_data.get("cognitive_reframe"),
+        "perspective_note": perspective_val,
+        "chat_transcript": chat_transcript_val,
         "has_audio": bool(entry_data.get("has_audio", False)),
         "has_image": bool(entry_data.get("has_image", False)),
         **entry_data,
+        "perspective_note": perspective_val,
+        "chat_transcript": chat_transcript_val,
         "user_id": user_id,  # Redundant verification field
         "created_at": entry_data.get("created_at") or datetime.utcnow(),
         "updated_at": datetime.utcnow()
@@ -100,6 +105,8 @@ def get_journal_entries(user_id: str):
         for doc in docs:
             data = doc.to_dict()
             data["id"] = doc.id
+            if "perspective_note" not in data and "cognitive_reframe" in data:
+                data["perspective_note"] = data["cognitive_reframe"]
             entries.append(data)
         
         return entries
