@@ -1,7 +1,12 @@
 import json
+from io import BytesIO
 import logging
 import time
 from typing import List, Dict, Any, Optional
+# pyrefly: ignore [missing-import]
+from PIL import Image
+# pyrefly: ignore [missing-import]
+import pillow_heif
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel, Field
 # pyrefly: ignore [missing-import]
@@ -13,6 +18,7 @@ from google.genai import errors
 from config import GEMINI_API_KEY
 
 logger = logging.getLogger(__name__)
+pillow_heif.register_heif_opener()
 
 # --- Model & Resilience Configuration ---
 PRIMARY_MODEL = "gemini-3.6-flash"
@@ -21,6 +27,16 @@ USER_FACING_BUSY_MESSAGE = (
     "The AI assistant is momentarily busy with high traffic. "
     "Please tap submit once more in a few seconds."
 )
+
+def prepare_image_for_gemini(image_data: bytes, mime_type: str) -> tuple[bytes, str]:
+    """Convert HEIC/HEIF image bytes to JPEG for Gemini-compatible input."""
+    if mime_type.lower() not in {"image/heic", "image/heif"}:
+        return image_data, mime_type
+
+    with Image.open(BytesIO(image_data)) as image:
+        jpeg_buffer = BytesIO()
+        image.convert("RGB").save(jpeg_buffer, format="JPEG")
+        return jpeg_buffer.getvalue(), "image/jpeg"
 
 # --- Pydantic Schema for Structured AI Reflection ---
 
@@ -164,7 +180,13 @@ def generate_content_with_retry(
     raise RuntimeError("AI Error: All models and retry attempts exhausted.")
 
 
-def send_chat_message(chat_session: Any, message: str, max_attempts: int = 3) -> str:
+def send_chat_message(
+    chat_session: Any,
+    message: str,
+    image_files: list = None,
+    audio_files: list = None,
+    max_attempts: int = 3,
+) -> str:
     """
     Sends a message to an active chat session with exponential backoff retry.
     Directly returns the exact error string on failure for diagnostics.
@@ -175,7 +197,15 @@ def send_chat_message(chat_session: Any, message: str, max_attempts: int = 3) ->
     last_error: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
-            resp = chat_session.send_message(message)
+            message_content = message
+            if image_files or audio_files:
+                message_content = [message]
+                for data, mime_type in image_files or []:
+                    data, mime_type = prepare_image_for_gemini(data, mime_type)
+                    message_content.append(types.Part.from_bytes(data=data, mime_type=mime_type))
+                for data, mime_type in audio_files or []:
+                    message_content.append(types.Part.from_bytes(data=data, mime_type=mime_type))
+            resp = chat_session.send_message(message_content)
             text = getattr(resp, "text", None)
             if text:
                 return str(text).strip()
@@ -234,7 +264,9 @@ def analyze_reflection(
     audio_mime_type: str = "audio/wav",
     image_bytes: Optional[bytes] = None,
     image_mime_type: str = "image/jpeg",
-    context_hint: Optional[str] = None
+    context_hint: Optional[str] = None,
+    audio_files: Optional[List[Any]] = None,
+    image_files: Optional[List[Any]] = None
 ) -> Optional[ReflectionResponse]:
     """
     Analyzes the chat history, attached multimodal media (voice note/photo),
@@ -267,12 +299,20 @@ def analyze_reflection(
         # Assemble multimodal contents list
         contents: List[Any] = []
 
-        # 1. Attach multimodal image part if provided
-        if image_bytes:
+        # 1. Attach multimodal image parts if provided
+        if image_files:
+            for image_data, image_type in image_files:
+                image_data, image_type = prepare_image_for_gemini(image_data, image_type)
+                contents.append(types.Part.from_bytes(data=image_data, mime_type=image_type))
+        elif image_bytes:
+            image_bytes, image_mime_type = prepare_image_for_gemini(image_bytes, image_mime_type)
             contents.append(types.Part.from_bytes(data=image_bytes, mime_type=image_mime_type))
 
-        # 2. Attach multimodal audio part if provided
-        if audio_bytes:
+        # 2. Attach multimodal audio parts if provided
+        if audio_files:
+            for audio_data, audio_type in audio_files:
+                contents.append(types.Part.from_bytes(data=audio_data, mime_type=audio_type))
+        elif audio_bytes:
             contents.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime_type))
 
         hint_prompt = f"User indicated location/context preference: '{context_hint}'." if (context_hint and context_hint != "Auto-detect via AI") else "Infer the location/context from the text, photo, and voice tone."

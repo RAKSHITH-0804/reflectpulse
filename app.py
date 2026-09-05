@@ -1455,21 +1455,28 @@ with tab_journal:
     
     # Multimodal Attach (+) Next to Chat Input Bar
     st.session_state.uploader_key = st.session_state.get("uploader_key", 0)
-    active_audio_capture = None
-    photo_upload = None
+    active_audio_capture = []
+    photo_upload = []
     st.markdown("<div style='height: 70px;'></div>", unsafe_allow_html=True)
     input_col1, input_col2 = st.columns([0.08, 0.92], gap="small")
     with input_col1:
         with st.popover("➕", help="Add Photo or Voice Note"):
             st.markdown("##### 📎 Moment Attachments")
-            photo_upload = st.file_uploader("Upload Moment Photo", type=["jpg", "jpeg", "png"], key=f"photo_upl_{st.session_state.uploader_key}")
-            file_audio = st.file_uploader("Upload Voice Note", type=["wav", "mp3", "m4a"], key=f"voice_upl_{st.session_state.uploader_key}")
+            photo_upload = st.file_uploader("Upload Moment Photo", type=["jpg", "jpeg","png", "heic", "heif", "webp", "gif", "bmp"], accept_multiple_files=True, key=f"photo_upl_{st.session_state.uploader_key}")[:10]
+            st.caption("Up to 10 files, 200MB each • JPG, PNG, HEIC, WEBP, GIF, BMP")
+            file_audio = st.file_uploader("Upload Voice Note", type=["wav", "mp3", "m4a", "mp4", "aac", "ogg", "flac", "webm"], accept_multiple_files=True, key=f"voice_upl_{st.session_state.uploader_key}")[:10]
+            st.caption("Up to 10 files, 200MB each • WAV, MP3, M4A, MP4, AAC, OGG, FLAC, WEBM")
             active_audio_capture = file_audio
             if active_audio_capture:
-                st.audio(active_audio_capture)
+                for audio_file in active_audio_capture:
+                    st.audio(audio_file)
                 st.markdown("<span class='pill-chip chip-media'>🎙️ Audio Attached</span>", unsafe_allow_html=True)
             if photo_upload:
-                st.image(photo_upload, width=160)
+                for image_file in photo_upload:
+                    try:
+                        st.image(image_file, width=160)
+                    except Exception:
+                        st.caption(f"📎 {image_file.name} (preview unavailable)")
                 st.markdown("<span class='pill-chip chip-media'>📷 Image Attached</span>", unsafe_allow_html=True)
     with input_col2:
         user_prompt = st.chat_input("Write down your reflection, feelings, or questions...")
@@ -1486,7 +1493,12 @@ with tab_journal:
                 placeholder.markdown("*Thinking…*")
                 if gemini_service.client and st.session_state.chat_session:
                     try:
-                        reply = gemini_service.send_chat_message(st.session_state.chat_session, user_prompt)
+                        reply = gemini_service.send_chat_message(
+                            st.session_state.chat_session,
+                            user_prompt,
+                            image_files=[(f.getvalue(), f.type) for f in photo_upload] if photo_upload else None,
+                            audio_files=[(f.getvalue(), f.type) for f in active_audio_capture] if active_audio_capture else None,
+                        )
                     except Exception as e:
                         import logging
                         logging.getLogger(__name__).error(f"[Gemini chat error] {e}")
@@ -1499,6 +1511,8 @@ with tab_journal:
                     reply = "Something unexpected happened. Please refresh and try again."
                 placeholder.write(reply)
         st.session_state.chat_history.append({"role": "model", "content": reply})
+        st.session_state.uploader_key = st.session_state.get("uploader_key", 0) + 1
+        st.rerun()
 
     # Show visual badge if attachment is active
     if active_audio_capture or photo_upload:
@@ -1551,26 +1565,22 @@ with tab_journal:
                             for m in transcript
                         ])
                         
-                        aud_bytes = active_audio_capture.getvalue() if active_audio_capture else None
-                        aud_mime = "audio/wav"
-                        if active_audio_capture:
-                            name_str = getattr(active_audio_capture, "name", "").lower()
-                            if name_str.endswith(".mp3"):
-                                aud_mime = "audio/mp3"
-                            elif name_str.endswith(".m4a"):
-                                aud_mime = "audio/m4a"
+                        audio_parts = []
+                        for audio_file in active_audio_capture:
+                            audio_mime = getattr(audio_file, "type", "audio/wav")
+                            audio_parts.append((audio_file.getvalue(), audio_mime))
 
-                        img_bytes = photo_upload.getvalue() if photo_upload else None
-                        img_mime = getattr(photo_upload, "type", "image/jpeg") if photo_upload else "image/jpeg"
+                        image_parts = []
+                        for image_file in photo_upload:
+                            image_mime = getattr(image_file, "type", "image/jpeg")
+                            image_parts.append((image_file.getvalue(), image_mime))
                         
                         hint = custom_loc_val.strip() if (location_choice == "Custom" and custom_loc_val.strip()) else location_choice
 
                         analysis = gemini_service.analyze_reflection(
                             chat_history=transcript,
-                            audio_bytes=aud_bytes,
-                            audio_mime_type=aud_mime,
-                            image_bytes=img_bytes,
-                            image_mime_type=img_mime,
+                            audio_files=audio_parts,
+                            image_files=image_parts,
                             context_hint=hint
                         )
                         
@@ -1585,8 +1595,8 @@ with tab_journal:
                             "reflection_prompt": analysis.reflection_prompt,
                             "location_tag": analysis.location_tag,
                             "perspective_note": getattr(analysis, "perspective_note", None),
-                            "has_audio": bool(aud_bytes),
-                            "has_image": bool(img_bytes),
+                            "has_audio": bool(audio_parts),
+                            "has_image": bool(image_parts),
                             "created_at": datetime.now(timezone.utc)
                         }
                         
