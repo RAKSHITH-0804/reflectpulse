@@ -416,6 +416,18 @@ def render_custom_css(current_theme: str):
     # --- Dynamic Design System CSS Injection ---
     st.markdown(f"""
         <style>
+                header[data-testid="stHeader"] {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            min-height: 0 !important;
+        }
+        div[data-testid="stDecoration"] {
+            display: none !important;
+        }
+        div[data-testid="stStatusWidget"] {
+            display: none !important;
+        }
         @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap');
 
         {sidebar_layout_css}
