@@ -12,8 +12,8 @@ WORKDIR /app
 # Install system utilities needed for building packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
-
 # Copy requirements file first to optimize docker build cache layers
 COPY requirements.txt .
 
