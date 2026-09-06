@@ -1389,7 +1389,6 @@ with st.sidebar:
                     <div class="gemini-profile-email">{user_email}</div>
                 </div>
             </div>
-            <div class="gemini-tenant-tag">TENANT: {user_id[:16]}...</div>
         </div>
     """, unsafe_allow_html=True)
 
