@@ -363,7 +363,7 @@ def show_auth_ui():
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
-            justify-content: center !important;
+            justify-content: flex-start !important;
             width: 100vw !important;
             max-width: 100vw !important;
             margin: 0 auto !important;
@@ -376,7 +376,7 @@ def show_auth_ui():
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
-            justify-content: center !important;
+            justify-content: flex-start !important;
             min-height: 100dvh !important;
         }}
 
@@ -610,16 +610,25 @@ def show_auth_ui():
     """, unsafe_allow_html=True)
 
     # Compact Hero Section
+
+    st.markdown("""
+        <div style="text-align: center; margin-bottom: 4px;">
+            <span style="font-size: 1.4rem;">🔮</span>
+            <span style="font-size: 2rem; font-weight: 700; color: var(--text-primary); margin-left: 6px;">ReflectPulse</span>
+            <div style="font-size: 0.82rem; color: var(--text-secondary); margin-top: 2px;">Your private daily journal, reflected back with clarity.</div>
+        </div>
+    """, unsafe_allow_html=True)    
+
     st.markdown("""
         <div class="auth-hero-shell">
             <div class="auth-status-pill">
-                <span>🔒</span> SECURE FEDERATED AUTHENTICATION
+                <span>🔒</span> PRIVATE, VERIFIED & SECURE LOG-IN
             </div>
             <div class="auth-hero-title">
-                Reflect deeper, think clearer, and converse with <span class="auth-hero-accent">Gemini</span>.
+                Turn scattered thoughts into clarity with <span class="auth-hero-accent">Gemini</span>.
             </div>
             <div class="auth-hero-subtitle">
-                Write your unfiltered thoughts, daily reflections, or voice notes. Your private AI companion provides instant synthesis, thoughtful follow-up questions, and structured insights.
+                Capture what's on your mind through text, voice, or a photo — and let your private AI companion turn it into structured insight, gentle follow-ups, and a clearer perspective.
             </div>
         </div>
     """, unsafe_allow_html=True)
@@ -644,10 +653,10 @@ def show_auth_ui():
                     </a>
                 </div>
                 <div style="font-size: 1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">
-                    Google Account Verification
+                    Continue with Your Google Account
                 </div>
                 <div style="font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 10px; line-height: 1.35;">
-                    Authenticate securely with your Google identity. Single sign-on with zero credential storage.
+                    No passwords, no separate account — just your existing Google identity, verified by GOOGLE.
                 </div>
             </div>
         """, unsafe_allow_html=True)
@@ -671,18 +680,18 @@ def show_auth_ui():
         <div class="auth-feature-grid">
             <div class="auth-feature-card">
                 <div class="auth-feature-icon">🛡️</div>
-                <div class="auth-feature-title">Zero-Leak Privacy</div>
-                <div class="auth-feature-desc">Sandboxed multi-tenant Firestore rules strictly scoped under users/{user_id}/journals. Zero cross-tenant leakage.</div>
+                <div class="auth-feature-title">Your Data, Your Vault</div>
+                <div class="auth-feature-desc">Every entry lives in its own owner-locked path in Firestore — enforced by security rules, not just app logic. No one else can ever read it.</div>
             </div>
             <div class="auth-feature-card">
                 <div class="auth-feature-icon">💬</div>
-                <div class="auth-feature-title">Multimodal Dialogue</div>
-                <div class="auth-feature-desc">Ingest voice audio, photo moments, and deep reflective conversations with contextual mood and location tagging.</div>
+                <div class="auth-feature-title">Speak, Type, or Show</div>
+                <div class="auth-feature-desc">Drop in voice notes, photos, or free-form text — Gemini reads across all of it to understand mood, themes, and context together.</div>
             </div>
             <div class="auth-feature-card">
                 <div class="auth-feature-icon">⚡</div>
-                <div class="auth-feature-title">Resilient AI Pipeline</div>
-                <div class="auth-feature-desc">Powered by gemini-3.6-flash and Cloud Run serverless scale with dynamic runtime Secret Manager resolution.</div>
+                <div class="auth-feature-title">Always-On AI</div>
+                <div class="auth-feature-desc">Runs on latest Gemini models with Cloud Run's serverless scaling, pulling credentials securely at runtime — never baked into the code.</div>
             </div>
         </div>
     """, unsafe_allow_html=True)

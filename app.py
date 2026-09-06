@@ -90,6 +90,34 @@ def get_app_theme_css(theme: str) -> str:
 def render_custom_css(current_theme: str):
     theme_css = get_app_theme_css(current_theme)
     is_authenticated = st.session_state.get("authenticated", False)
+    mobile_sidebar_css = """
+        @media (max-width: 767px) {
+            [data-testid="stSidebar"][aria-expanded="false"] {
+                display: none !important;
+                width: 0px !important;
+                min-width: 0px !important;
+                max-width: 0px !important;
+            }
+            [data-testid="stSidebar"][aria-expanded="true"] {
+                display: flex !important;
+                width: 85vw !important;
+                min-width: 85vw !important;
+                max-width: 85vw !important;
+            }
+            section.main, [data-testid="stMain"] {
+                width: 100vw !important;
+            }
+            [data-testid="stSidebarCollapsedControl"] {
+                display: flex !important;
+                visibility: visible !important;
+                position: fixed !important;
+                top: 8px !important;
+                left: 8px !important;
+                z-index: 999999 !important;
+            }
+
+        }
+    """
 
     if is_authenticated:
         sidebar_layout_css = """
@@ -417,10 +445,12 @@ def render_custom_css(current_theme: str):
     st.markdown(f"""
         <style>
             header[data-testid="stHeader"] {{
-            display: none !important;
-            visibility: hidden !important;
-            height: 0 !important;
+            display: block !important;
+            visibility: visible !important;
             min-height: 0 !important;
+            height: 2px !important;
+            overflow: visible !important;
+            background: transparent !important;
         }}
         div[data-testid="stDecoration"] {{
             display: none !important;
@@ -431,6 +461,8 @@ def render_custom_css(current_theme: str):
         @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600;1,700&display=swap');
 
         {sidebar_layout_css}
+
+        {mobile_sidebar_css}
 
         {theme_css}
 
